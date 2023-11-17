@@ -1,0 +1,40 @@
+{
+  "name": "ripgrepripset",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "repository": "git@github.com:futpib/ripgrepripsed.git",
+  "license": "GPL-3.0",
+  "packageManager": "yarn@3.3.0",
+  "scripts": {
+    "build": "tsc",
+    "test": "nyc ava",
+    "dev": "tsc --watch"
+  },
+  "ava": {
+    "files": [
+      "src/test/**/*"
+    ],
+    "typescript": {
+      "rewritePaths": {
+        "src/": "lib/"
+      },
+      "compile": "tsc"
+    },
+    "verbose": true
+  },
+  "bin": {
+    "rgrs": "./lib/cli.js"
+  },
+  "devDependencies": {
+    "@ava/typescript": "^3.0.1",
+    "@types/node": "^18.18.9",
+    "ava": "^5.3.1",
+    "nyc": "^15.1.0",
+    "typescript": "^5.2.2"
+  },
+  "dependencies": {
+    "commander": "^9.5.0",
+    "execa": "^6.1.0"
+  }
+}
