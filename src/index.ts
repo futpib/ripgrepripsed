@@ -1,4 +1,5 @@
 import readline from 'node:readline/promises';
+import fs from 'node:fs';
 import { execa } from 'execa';
 
 function execaLog(command: string, arguments_: string[]) {
@@ -10,35 +11,35 @@ function execaLog(command: string, arguments_: string[]) {
 	});
 }
 
-type RgChunk = {
+type RgRegion = {
 	filepath: string;
 	firstLineNumber: number;
 	lastLineNumber: number;
 	lines: string[];
 };
 
-async function * rgLinesToChunks(lines: AsyncIterable<string>) {
-	let chunk: undefined | RgChunk = undefined;
+async function * rgLinesToRegions(lines: AsyncIterable<string>) {
+	let region: undefined | RgRegion = undefined;
 
 	for await (const line of lines) {
 		const [ filepath, lineNumber, ...rest ] = line.split(':');
 
 		if (
-			chunk
-				&& filepath === chunk.filepath
-				&& Number(lineNumber) === chunk.lastLineNumber + 1
+			region
+				&& filepath === region.filepath
+				&& Number(lineNumber) === region.lastLineNumber + 1
 		) {
-			chunk.lastLineNumber = Number(lineNumber);
-			chunk.lines.push(rest.join(':'));
+			region.lastLineNumber = Number(lineNumber);
+			region.lines.push(rest.join(':'));
 			continue;
 		}
 
-		if (chunk) {
-			yield chunk;
-			chunk = undefined;
+		if (region) {
+			yield region;
+			region = undefined;
 		}
 
-		chunk = {
+		region = {
 			filepath,
 			firstLineNumber: Number(lineNumber),
 			lastLineNumber: Number(lineNumber),
@@ -46,8 +47,8 @@ async function * rgLinesToChunks(lines: AsyncIterable<string>) {
 		};
 	}
 
-	if (chunk) {
-		yield chunk;
+	if (region) {
+		yield region;
 	}
 }
 
@@ -65,9 +66,19 @@ type SedScript = {
 	flags: string;
 };
 
+type PrintFilesScript = {
+	type: 'print-files';
+};
+
+type PrintRegionsScript = {
+	type: 'print-regions';
+};
+
 type Script =
 	| RgScript
 	| SedScript
+	| PrintFilesScript
+	| PrintRegionsScript
 ;
 
 async function * rgLines(script: RgScript) {
@@ -97,21 +108,32 @@ async function * rgLines(script: RgScript) {
 	}
 }
 
-async function sedChunk(chunk: RgChunk, script: SedScript) {
+async function sedRegion(region: RgRegion, script: SedScript) {
 	await execaLog('sed', [
 		'--in-place',
 		'--regexp-extended',
 		[
 			[
-				chunk.firstLineNumber,
-				chunk.lastLineNumber,
+				region.firstLineNumber,
+				region.lastLineNumber,
 			].join(',') + 's',
 			script.pattern,
 			script.replacement,
 			script.flags,
 		].join(script.separator),
-		chunk.filepath,
+		region.filepath,
 	]);
+}
+
+async function * readLines(filepath: string) {
+	const input = fs.createReadStream(filepath, 'utf8');
+
+	const lines = readline.createInterface({
+		input,
+		crlfDelay: Infinity,
+	});
+
+	yield * lines;
 }
 
 function parseScript(script: string): Script {
@@ -151,30 +173,74 @@ function parseScript(script: string): Script {
 		};
 	}
 
+	if (script === 'print-files') {
+		return {
+			type: 'print-files',
+		};
+	}
+
 	throw new Error(`Unknown script type: ${script}`);
 }
 
 export async function main(scriptStrings: string[]) {
 	const scripts = scriptStrings.map(parseScript);
 
-	let rgChunks: RgChunk[] = [];
+	if (scripts.at(-1)?.type === 'rg') {
+		scripts.push({
+			type: 'print-regions',
+		});
+	}
+
+	let rgRegions: RgRegion[] = [];
 
 	for (const script of scripts) {
 		if (script.type === 'rg') {
 			const lines = rgLines(script);
-			const chunks = rgLinesToChunks(lines);
+			const regions = rgLinesToRegions(lines);
 
-			rgChunks = [];
-			for await (const chunk of chunks) {
-				rgChunks.push(chunk);
+			rgRegions = [];
+			for await (const region of regions) {
+				rgRegions.push(region);
 			}
 
 			continue;
 		}
 
 		if (script.type === 'sed') {
-			for (const chunk of rgChunks) {
-				await sedChunk(chunk, script);
+			for (const region of rgRegions) {
+				await sedRegion(region, script);
+			}
+
+			continue;
+		}
+
+		if (script.type === 'print-files') {
+			const printedFiles = new Set<string>();
+
+			for (const region of rgRegions) {
+				if (!printedFiles.has(region.filepath)) {
+					console.log(region.filepath);
+					printedFiles.add(region.filepath);
+				}
+			}
+
+			continue;
+		}
+
+		if (script.type === 'print-regions') {
+			for (const region of rgRegions) {
+				let lineNumber = 1;
+				for await (const line of readLines(region.filepath)) {
+					if (lineNumber >= region.firstLineNumber && lineNumber <= region.lastLineNumber) {
+						console.log([
+							region.filepath,
+							lineNumber,
+							line,
+						].join(':'));
+					}
+
+					lineNumber += 1;
+				}
 			}
 
 			continue;

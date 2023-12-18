@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import path from 'path';
 import { program } from 'commander';
 import { main } from './index.js';
 
