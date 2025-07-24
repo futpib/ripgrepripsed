@@ -96,7 +96,7 @@ type Script =
 ;
 
 async function * executeRg(pattern: string, flags: string, files?: string[]) {
-	const args = [
+	const baseArgs = [
 		'--line-buffered',
 		...(
 			flags.includes('s')
@@ -108,9 +108,15 @@ async function * executeRg(pattern: string, flags: string, files?: string[]) {
 		),
 		'--line-number',
 		pattern,
-		...(files || []),
 	];
-	console.error('+', 'rg', ...args);
+	const args = [...baseArgs, ...(files || [])];
+	
+	if (files && files.length > 0) {
+		console.error('+', 'rg', ...baseArgs, `(${files.length} files)`);
+	} else {
+		console.error('+', 'rg', ...baseArgs);
+	}
+	
 	const subprocess = execa('rg', args, {
 		stdin: 'ignore',
 		stdout: 'pipe',
