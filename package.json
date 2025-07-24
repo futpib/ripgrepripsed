@@ -1,41 +1,40 @@
 {
   "name": "ripgrepripsed",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "build/index.js",
   "type": "module",
   "repository": "git@github.com:futpib/ripgrepripsed.git",
   "license": "GPL-3.0",
-  "packageManager": "yarn@3.3.0",
+  "packageManager": "yarn@4.9.2",
   "scripts": {
     "build": "tsc",
-    "test": "nyc ava",
+    "test": "c8 ava",
     "dev": "tsc --watch"
   },
   "ava": {
-    "files": [
-      "src/test/**/*"
-    ],
     "typescript": {
       "rewritePaths": {
-        "src/": "lib/"
+        "src/": "build/"
       },
-      "compile": "tsc"
+      "compile": false
     },
     "verbose": true
   },
   "bin": {
-    "rgrs": "./lib/cli.js"
+    "rgrs": "./build/cli.js"
   },
   "devDependencies": {
-    "@ava/typescript": "^3.0.1",
-    "@types/node": "^18.18.9",
-    "ava": "^5.3.1",
-    "nyc": "^15.1.0",
-    "typescript": "^5.2.2"
+    "@ava/typescript": "^6.0.0",
+    "@types/node": "^24.1.0",
+    "ava": "^6.4.1",
+    "c8": "^10.1.3",
+    "eslint-config-xo-typescript-overrides": "^2.0.3",
+    "typescript": "^5.8.3",
+    "xo": "^1.2.1"
   },
   "dependencies": {
-    "commander": "^9.5.0",
-    "execa": "^6.1.0",
+    "commander": "^14.0.0",
+    "execa": "^9.6.0",
     "minimatch": "^10.0.3"
   }
 }

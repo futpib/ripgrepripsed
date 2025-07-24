@@ -80,19 +80,26 @@ type GlobScript = {
 	pattern: string;
 };
 
+type RgNegatedScript = {
+	type: 'rg-negated';
+	pattern: string;
+	flags: string;
+};
+
 type Script =
 	| RgScript
 	| SedScript
 	| PrintFilesScript
 	| PrintRegionsScript
 	| GlobScript
+	| RgNegatedScript
 ;
 
-async function * rgLines(script: RgScript) {
-	const subprocess = execaLog('rg', [
+function executeRg(pattern: string, flags: string) {
+	return execaLog('rg', [
 		'--line-buffered',
 		...(
-			script.flags.includes('s')
+			flags.includes('s')
 				? [
 					'--multiline',
 					'--multiline-dotall',
@@ -100,8 +107,12 @@ async function * rgLines(script: RgScript) {
 				: []
 		),
 		'--line-number',
-		script.pattern,
+		pattern,
 	]);
+}
+
+async function * rgLines(script: RgScript) {
+	const subprocess = executeRg(script.pattern, script.flags);
 
 	const lines = subprocess.stdout && readline.createInterface({
 		input: subprocess.stdout,
@@ -166,6 +177,18 @@ function parseScript(script: string): Script {
 				flags,
 			};
 		}
+	}
+
+	if (script.startsWith('!rg')) {
+		const separator = script[3];
+
+		const [ _, pattern, flags ] = script.split(separator);
+
+		return {
+			type: 'rg-negated',
+			pattern,
+			flags: flags || '',
+		};
 	}
 
 	if (script.startsWith('rg')) {
@@ -275,6 +298,51 @@ export async function main(scriptStrings: string[]) {
 			rgRegions = rgRegions.filter(region =>
 				minimatch(region.filepath, script.pattern)
 			);
+
+			continue;
+		}
+
+		if (script.type === 'rg-negated') {
+			const subprocess = executeRg(script.pattern, script.flags);
+
+			const lines = subprocess.stdout && readline.createInterface({
+				input: subprocess.stdout,
+				crlfDelay: Infinity,
+			});
+
+			const negatedRegions: RgRegion[] = [];
+			for await (const line of (lines ?? [])) {
+				if (line.trim()) {
+					const [ filepath, lineNumber, ...rest ] = line.split(':');
+					const lineNum = Number(lineNumber);
+					
+					let region = negatedRegions.find(r => 
+						r.filepath === filepath && 
+						r.lastLineNumber === lineNum - 1
+					);
+					
+					if (!region) {
+						region = {
+							filepath,
+							firstLineNumber: lineNum,
+							lastLineNumber: lineNum,
+							lines: [ rest.join(':') ],
+						};
+						negatedRegions.push(region);
+					} else {
+						region.lastLineNumber = lineNum;
+						region.lines.push(rest.join(':'));
+					}
+				}
+			}
+
+			rgRegions = rgRegions.filter(region => {
+				return !negatedRegions.some(negatedRegion =>
+					negatedRegion.filepath === region.filepath &&
+					negatedRegion.firstLineNumber <= region.lastLineNumber &&
+					negatedRegion.lastLineNumber >= region.firstLineNumber
+				);
+			});
 
 			continue;
 		}
