@@ -2704,9 +2704,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ripgrepripset@workspace:.":
+"ripgrepripsed@workspace:.":
   version: 0.0.0-use.local
-  resolution: "ripgrepripset@workspace:."
+  resolution: "ripgrepripsed@workspace:."
   dependencies:
     "@ava/typescript": ^3.0.1
     "@types/node": ^18.18.9
