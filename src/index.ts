@@ -1,6 +1,7 @@
 import readline from 'node:readline/promises';
 import fs from 'node:fs';
 import { execa } from 'execa';
+import { minimatch } from 'minimatch';
 
 function execaLog(command: string, arguments_: string[]) {
 	console.error('+', command, ...arguments_);
@@ -74,11 +75,17 @@ type PrintRegionsScript = {
 	type: 'print-regions';
 };
 
+type GlobScript = {
+	type: 'glob';
+	pattern: string;
+};
+
 type Script =
 	| RgScript
 	| SedScript
 	| PrintFilesScript
 	| PrintRegionsScript
+	| GlobScript
 ;
 
 async function * rgLines(script: RgScript) {
@@ -179,6 +186,24 @@ function parseScript(script: string): Script {
 		};
 	}
 
+	if (script === 'print-regions') {
+		return {
+			type: 'print-regions',
+		};
+	}
+
+	if (script.startsWith('glob')) {
+		const separator = script[4];
+		const [ _, pattern ] = script.split(separator);
+
+		if (pattern) {
+			return {
+				type: 'glob',
+				pattern,
+			};
+		}
+	}
+
 	throw new Error(`Unknown script type: ${script}`);
 }
 
@@ -242,6 +267,14 @@ export async function main(scriptStrings: string[]) {
 					lineNumber += 1;
 				}
 			}
+
+			continue;
+		}
+
+		if (script.type === 'glob') {
+			rgRegions = rgRegions.filter(region =>
+				minimatch(region.filepath, script.pattern)
+			);
 
 			continue;
 		}
