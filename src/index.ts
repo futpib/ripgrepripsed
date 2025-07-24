@@ -95,7 +95,7 @@ type Script =
 	| RgNegatedScript
 ;
 
-async function * executeRg(pattern: string, flags: string) {
+async function * executeRg(pattern: string, flags: string, files?: string[]) {
 	const args = [
 		'--line-buffered',
 		...(
@@ -108,6 +108,7 @@ async function * executeRg(pattern: string, flags: string) {
 		),
 		'--line-number',
 		pattern,
+		...(files || []),
 	];
 	console.error('+', 'rg', ...args);
 	const subprocess = execa('rg', args, {
@@ -124,9 +125,6 @@ async function * executeRg(pattern: string, flags: string) {
 	}
 }
 
-async function * rgLines(script: RgScript) {
-	yield * executeRg(script.pattern, script.flags);
-}
 
 async function sedRegion(region: RgRegion, script: SedScript) {
 	await execaLog('sed', [
@@ -245,15 +243,38 @@ export async function main(scriptStrings: string[]) {
 	}
 
 	let rgRegions: RgRegion[] = [];
+	let isFirstRg = true;
 
 	for (const script of scripts) {
 		if (script.type === 'rg') {
-			const lines = rgLines(script);
-			const regions = rgLinesToRegions(lines);
+			if (isFirstRg) {
+				const lines = executeRg(script.pattern, script.flags);
+				const regions = rgLinesToRegions(lines);
 
-			rgRegions = [];
-			for await (const region of regions) {
-				rgRegions.push(region);
+				rgRegions = [];
+				for await (const region of regions) {
+					rgRegions.push(region);
+				}
+				isFirstRg = false;
+			} else {
+				const uniqueFiles = [...new Set(rgRegions.map(region => region.filepath))];
+				const lines = executeRg(script.pattern, script.flags, uniqueFiles);
+				const regions = rgLinesToRegions(lines);
+
+				const newRegionsByFile = new Map<string, RgRegion[]>();
+				for await (const region of regions) {
+					const fileRegions = newRegionsByFile.get(region.filepath) || [];
+					fileRegions.push(region);
+					newRegionsByFile.set(region.filepath, fileRegions);
+				}
+
+				rgRegions = rgRegions.filter(existingRegion => {
+					const newRegions = newRegionsByFile.get(existingRegion.filepath) || [];
+					return newRegions.some(newRegion =>
+						newRegion.firstLineNumber <= existingRegion.lastLineNumber &&
+						newRegion.lastLineNumber >= existingRegion.firstLineNumber
+					);
+				});
 			}
 
 			continue;
@@ -308,7 +329,8 @@ export async function main(scriptStrings: string[]) {
 		}
 
 		if (script.type === 'rg-negated') {
-			const lines = executeRg(script.pattern, script.flags);
+			const uniqueFiles = [...new Set(rgRegions.map(region => region.filepath))];
+			const lines = executeRg(script.pattern, script.flags, uniqueFiles.length > 0 ? uniqueFiles : undefined);
 			const regions = rgLinesToRegions(lines);
 			
 			const negatedRegionsByFile = new Map<string, RgRegion[]>();
