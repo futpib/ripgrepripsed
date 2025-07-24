@@ -95,8 +95,8 @@ type Script =
 	| RgNegatedScript
 ;
 
-function executeRg(pattern: string, flags: string) {
-	return execaLog('rg', [
+async function * executeRg(pattern: string, flags: string) {
+	const args = [
 		'--line-buffered',
 		...(
 			flags.includes('s')
@@ -108,22 +108,24 @@ function executeRg(pattern: string, flags: string) {
 		),
 		'--line-number',
 		pattern,
-	]);
-}
-
-async function * rgLines(script: RgScript) {
-	const subprocess = executeRg(script.pattern, script.flags);
-
-	const lines = subprocess.stdout && readline.createInterface({
-		input: subprocess.stdout,
-		crlfDelay: Infinity,
+	];
+	console.error('+', 'rg', ...args);
+	const subprocess = execa('rg', args, {
+		stdin: 'ignore',
+		stdout: 'pipe',
+		stderr: 'inherit',
+		lines: true,
 	});
 
-	for await (const line of (lines ?? [])) {
+	for await (const line of subprocess) {
 		if (line.trim()) {
 			yield line;
 		}
 	}
+}
+
+async function * rgLines(script: RgScript) {
+	yield * executeRg(script.pattern, script.flags);
 }
 
 async function sedRegion(region: RgRegion, script: SedScript) {
@@ -233,7 +235,10 @@ function parseScript(script: string): Script {
 export async function main(scriptStrings: string[]) {
 	const scripts = scriptStrings.map(parseScript);
 
-	if (scripts.at(-1)?.type === 'rg') {
+	const hasExplicitPrintCommand = scripts.some(script => 
+		script.type === 'print-files' || script.type === 'print-regions'
+	);
+	if (!hasExplicitPrintCommand) {
 		scripts.push({
 			type: 'print-regions',
 		});
@@ -303,42 +308,19 @@ export async function main(scriptStrings: string[]) {
 		}
 
 		if (script.type === 'rg-negated') {
-			const subprocess = executeRg(script.pattern, script.flags);
-
-			const lines = subprocess.stdout && readline.createInterface({
-				input: subprocess.stdout,
-				crlfDelay: Infinity,
-			});
-
-			const negatedRegions: RgRegion[] = [];
-			for await (const line of (lines ?? [])) {
-				if (line.trim()) {
-					const [ filepath, lineNumber, ...rest ] = line.split(':');
-					const lineNum = Number(lineNumber);
-					
-					let region = negatedRegions.find(r => 
-						r.filepath === filepath && 
-						r.lastLineNumber === lineNum - 1
-					);
-					
-					if (!region) {
-						region = {
-							filepath,
-							firstLineNumber: lineNum,
-							lastLineNumber: lineNum,
-							lines: [ rest.join(':') ],
-						};
-						negatedRegions.push(region);
-					} else {
-						region.lastLineNumber = lineNum;
-						region.lines.push(rest.join(':'));
-					}
-				}
+			const lines = executeRg(script.pattern, script.flags);
+			const regions = rgLinesToRegions(lines);
+			
+			const negatedRegionsByFile = new Map<string, RgRegion[]>();
+			for await (const region of regions) {
+				const fileRegions = negatedRegionsByFile.get(region.filepath) || [];
+				fileRegions.push(region);
+				negatedRegionsByFile.set(region.filepath, fileRegions);
 			}
 
 			rgRegions = rgRegions.filter(region => {
+				const negatedRegions = negatedRegionsByFile.get(region.filepath) || [];
 				return !negatedRegions.some(negatedRegion =>
-					negatedRegion.filepath === region.filepath &&
 					negatedRegion.firstLineNumber <= region.lastLineNumber &&
 					negatedRegion.lastLineNumber >= region.firstLineNumber
 				);
