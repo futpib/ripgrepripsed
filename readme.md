@@ -40,6 +40,18 @@ Example:
 rgrs "rg/var /g" "sed/s/var /let /g"  # Replace var with let
 ```
 
+### Files from stdin
+Read file list from stdin to initialize or filter the pipeline:
+```bash
+echo -e "file1.js\nfile2.js" | rgrs "files-from-stdin" "rg/pattern/g"
+```
+
+### Negated Search
+Exclude regions that match a pattern:
+```bash
+rgrs "rg/function/g" "!rg/test/g"  # Find functions but exclude test functions
+```
+
 ### Glob Filtering
 Filter results by file path patterns:
 ```bash
@@ -77,6 +89,15 @@ rgrs "rg/import/g" "glob/*.ts" "print-files"
 
 # Process files in src directory
 rgrs "rg/TODO/g" "glob/src/**/*" "print-regions"
+```
+
+### Use files from stdin
+```bash
+# Process only specific files from stdin
+find . -name "*.js" | rgrs "files-from-stdin" "rg/console\.log/g" "sed/s/console\.log/logger.info/g"
+
+# Use git to get modified files and search them
+git diff --name-only | rgrs "files-from-stdin" "rg/TODO/g" "print-regions"
 ```
 
 ## Features

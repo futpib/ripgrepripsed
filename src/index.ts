@@ -86,6 +86,10 @@ type RgNegatedScript = {
 	flags: string;
 };
 
+type FilesFromStdinScript = {
+	type: 'files-from-stdin';
+};
+
 type Script =
 	| RgScript
 	| SedScript
@@ -93,6 +97,7 @@ type Script =
 	| PrintRegionsScript
 	| GlobScript
 	| RgNegatedScript
+	| FilesFromStdinScript
 ;
 
 async function * executeRg(pattern: string, flags: string, files?: string[]) {
@@ -110,13 +115,13 @@ async function * executeRg(pattern: string, flags: string, files?: string[]) {
 		pattern,
 	];
 	const args = [...baseArgs, ...(files || [])];
-	
+
 	if (files && files.length > 0) {
 		console.error('+', 'rg', ...baseArgs, `(${files.length} files)`);
 	} else {
 		console.error('+', 'rg', ...baseArgs);
 	}
-	
+
 	const subprocess = execa('rg', args, {
 		stdin: 'ignore',
 		stdout: 'pipe',
@@ -158,6 +163,23 @@ async function * readLines(filepath: string) {
 	});
 
 	yield * lines;
+}
+
+async function readFilesFromStdin(): Promise<string[]> {
+	const files: string[] = [];
+	const rl = readline.createInterface({
+		input: process.stdin,
+		crlfDelay: Infinity,
+	});
+
+	for await (const line of rl) {
+		const trimmed = line.trim();
+		if (trimmed) {
+			files.push(trimmed);
+		}
+	}
+
+	return files;
 }
 
 function parseScript(script: string): Script {
@@ -233,13 +255,19 @@ function parseScript(script: string): Script {
 		}
 	}
 
+	if (script === 'files-from-stdin') {
+		return {
+			type: 'files-from-stdin',
+		};
+	}
+
 	throw new Error(`Unknown script type: ${script}`);
 }
 
 export async function main(scriptStrings: string[]) {
 	const scripts = scriptStrings.map(parseScript);
 
-	const hasExplicitPrintCommand = scripts.some(script => 
+	const hasExplicitPrintCommand = scripts.some(script =>
 		script.type === 'print-files' || script.type === 'print-regions'
 	);
 	if (!hasExplicitPrintCommand) {
@@ -249,11 +277,12 @@ export async function main(scriptStrings: string[]) {
 	}
 
 	let rgRegions: RgRegion[] = [];
-	let isFirstRg = true;
 
-	for (const script of scripts) {
+	for (const [index, script] of scripts.entries()) {
+		const isFirstScript = index === 0;
+
 		if (script.type === 'rg') {
-			if (isFirstRg) {
+			if (isFirstScript) {
 				const lines = executeRg(script.pattern, script.flags);
 				const regions = rgLinesToRegions(lines);
 
@@ -261,7 +290,6 @@ export async function main(scriptStrings: string[]) {
 				for await (const region of regions) {
 					rgRegions.push(region);
 				}
-				isFirstRg = false;
 			} else {
 				const uniqueFiles = [...new Set(rgRegions.map(region => region.filepath))];
 				const lines = executeRg(script.pattern, script.flags, uniqueFiles);
@@ -338,7 +366,7 @@ export async function main(scriptStrings: string[]) {
 			const uniqueFiles = [...new Set(rgRegions.map(region => region.filepath))];
 			const lines = executeRg(script.pattern, script.flags, uniqueFiles.length > 0 ? uniqueFiles : undefined);
 			const regions = rgLinesToRegions(lines);
-			
+
 			const negatedRegionsByFile = new Map<string, RgRegion[]>();
 			for await (const region of regions) {
 				const fileRegions = negatedRegionsByFile.get(region.filepath) || [];
@@ -353,6 +381,30 @@ export async function main(scriptStrings: string[]) {
 					negatedRegion.lastLineNumber >= region.firstLineNumber
 				);
 			});
+
+			continue;
+		}
+
+		if (script.type === 'files-from-stdin') {
+			const filesFromStdin = await readFilesFromStdin();
+
+			if (isFirstScript) {
+				// Initialize regions from stdin files (first script in pipeline)
+				for (const filepath of filesFromStdin) {
+					// Create a region representing the entire file
+					rgRegions.push({
+						filepath,
+						firstLineNumber: 1,
+						lastLineNumber: Number.MAX_SAFE_INTEGER,
+						lines: [],
+					});
+				}
+			} else {
+				// Filter existing regions to only include files from stdin
+				rgRegions = rgRegions.filter(region =>
+					filesFromStdin.includes(region.filepath)
+				);
+			}
 
 			continue;
 		}
